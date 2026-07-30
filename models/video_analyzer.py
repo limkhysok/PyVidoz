@@ -7,30 +7,24 @@ ffprobe, and prints a side-by-side technical comparison (resolution, codec,
 bitrate, bits-per-pixel quality density, color depth, etc).
 
 Usage:
-    python analyze_videos.py
-    python analyze_videos.py --json report.json   # also dump raw metrics
+    python -m models.video_analyzer
+    python -m models.video_analyzer --json report.json   # also dump raw metrics
 """
 import argparse
-import json
-import subprocess
 import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, TypedDict
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-    sys.stderr.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
-except Exception:  # noqa: BLE001, S110 - stdout/stderr may not support reconfigure at all
-    pass
+from models.config import BASE_DIR, FFPROBE, VIDEO_EXTS
+from models.utils import ensure_utf8_stdio, parse_fps, probe
 
-BASE_DIR = Path(__file__).resolve().parent
-FFPROBE = BASE_DIR / "ffprobe.exe"
+ensure_utf8_stdio()
+
 FOLDERS = {
     "iPhone (recorded)": BASE_DIR / "video_from_iphone",
     "Downloaded": BASE_DIR / "video_from_download",
 }
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
 
 
 class VideoInfo(TypedDict, total=False):
@@ -57,25 +51,6 @@ class VideoInfo(TypedDict, total=False):
     audio_bitrate_kbps: float
 
 
-def probe(path: Path) -> dict[str, Any]:
-    cmd = [str(FFPROBE), "-v", "quiet", "-print_format", "json",
-           "-show_format", "-show_streams", str(path)]
-    result = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", check=False)
-    if result.returncode != 0 or not result.stdout.strip():
-        raise RuntimeError(f"ffprobe failed on {path.name}: {result.stderr[:300]}")
-    return json.loads(result.stdout)
-
-
-def parse_fps(rate_str: str) -> float:
-    try:
-        num, den = rate_str.split("/")
-        den_val = float(den)
-        return float(num) / den_val if den_val else 0.0
-    except (ValueError, ZeroDivisionError):
-        return 0.0
-
-
 def bpp_label(bpp: float) -> str:
     if bpp >= 0.15:
         return "Excellent"
@@ -86,6 +61,31 @@ def bpp_label(bpp: float) -> str:
     if bpp > 0:
         return "Heavily compressed"
     return "n/a"
+
+
+def _bit_depth_from_pix_fmt(pix_fmt: str | None) -> str:
+    if pix_fmt is None:
+        return "?"
+    return "10-bit" if "p10" in pix_fmt else "8-bit"
+
+
+def _is_rotated(side_data: list[dict[str, Any]]) -> bool:
+    return any(abs(sd.get("rotation", 0)) in (90, 270) for sd in side_data)
+
+
+def _parse_video_stream(vstream: dict[str, Any]) -> dict[str, Any]:
+    side_data: list[dict[str, Any]] = vstream.get("side_data_list", []) or []
+    return {
+        "width": int(vstream.get("width", 0) or 0),
+        "height": int(vstream.get("height", 0) or 0),
+        "codec": vstream.get("codec_name"),
+        "profile": vstream.get("profile"),
+        "pix_fmt": vstream.get("pix_fmt"),
+        "color_space": vstream.get("color_space"),
+        "bitrate": int(vstream.get("bit_rate", 0) or 0),
+        "fps": parse_fps(vstream.get("avg_frame_rate", "0/0")) or parse_fps(vstream.get("r_frame_rate", "0/0")),
+        "rotated": _is_rotated(side_data),
+    }
 
 
 def analyze_file(path: Path) -> VideoInfo:
@@ -99,25 +99,16 @@ def analyze_file(path: Path) -> VideoInfo:
     duration = float(fmt.get("duration", 0) or 0)
     overall_bitrate = int(fmt.get("bit_rate", 0) or 0)
 
-    width = height = 0
-    fps = 0.0
-    vcodec = pix_fmt = color_space = profile = None
-    vbitrate = 0
-    rotated = False
-
-    if vstream:
-        width = int(vstream.get("width", 0) or 0)
-        height = int(vstream.get("height", 0) or 0)
-        vcodec = vstream.get("codec_name")
-        profile = vstream.get("profile")
-        pix_fmt = vstream.get("pix_fmt")
-        color_space = vstream.get("color_space")
-        vbitrate = int(vstream.get("bit_rate", 0) or 0)
-        fps = parse_fps(vstream.get("avg_frame_rate", "0/0")) or parse_fps(vstream.get("r_frame_rate", "0/0"))
-        side_data: list[dict[str, Any]] = vstream.get("side_data_list", []) or []
-        for sd in side_data:
-            if "rotation" in sd and abs(sd["rotation"]) in (90, 270):
-                rotated = True
+    v = _parse_video_stream(vstream) if vstream else {}
+    width = v.get("width", 0)
+    height = v.get("height", 0)
+    vcodec = v.get("codec")
+    profile = v.get("profile")
+    pix_fmt = v.get("pix_fmt")
+    color_space = v.get("color_space")
+    vbitrate = v.get("bitrate", 0)
+    fps = v.get("fps", 0.0)
+    rotated = v.get("rotated", False)
 
     audio_bitrate_total = sum(int(a.get("bit_rate", 0) or 0) for a in astreams)
     if vbitrate == 0 and overall_bitrate:
@@ -126,7 +117,7 @@ def analyze_file(path: Path) -> VideoInfo:
     eff_w, eff_h = (height, width) if rotated else (width, height)
     pixels = eff_w * eff_h
     bpp = (vbitrate / (pixels * fps)) if pixels and fps else 0.0
-    bit_depth = "10-bit" if pix_fmt and ("p10" in pix_fmt) else ("8-bit" if pix_fmt else "?")
+    bit_depth = _bit_depth_from_pix_fmt(pix_fmt)
 
     return {
         "file": path.name,
@@ -184,10 +175,7 @@ def avg(vals: Iterable[float]) -> float:
     return round(sum(kept) / len(kept), 3) if kept else 0.0
 
 
-def print_summary(results: dict[str, list[VideoInfo]]):
-    print("\n" + "=" * 60)
-    print("SUMMARY COMPARISON")
-    print("=" * 60)
+def _print_metric_averages(results: dict[str, list[VideoInfo]]) -> None:
     header = f"{'Metric':<24}"
     labels = list(results.keys())
     for lbl in labels:
@@ -207,45 +195,69 @@ def print_summary(results: dict[str, list[VideoInfo]]):
             line += f"{val:>18}"
         print(line)
 
-    print()
+
+def _print_verdict(results: dict[str, list[VideoInfo]]) -> None:
     dl = results.get("Downloaded", [])
     ip = results.get("iPhone (recorded)", [])
-    if dl and ip:
-        dl_bpp = avg(r.get("bits_per_pixel", 0.0) for r in dl)
-        ip_bpp = avg(r.get("bits_per_pixel", 0.0) for r in ip)
-        dl_br = avg(r.get("video_bitrate_mbps", 0.0) for r in dl)
-        ip_br = avg(r.get("video_bitrate_mbps", 0.0) for r in ip)
-        if dl_bpp > 0:
-            print(f"Verdict: iPhone recordings carry ~{round(ip_bpp / dl_bpp, 1)}x more data per pixel")
-            print(f"         ({round(ip_br,2)} Mbps vs {round(dl_br,2)} Mbps video bitrate) than the downloaded copies.")
-            print("         Downloaded files were almost certainly re-encoded/compressed by the")
-            print("         platform (and possibly again by the download tool), which is the direct")
-            print("         cause of the visible quality gap.")
+    if not (dl and ip):
+        return
+    dl_bpp = avg(r.get("bits_per_pixel", 0.0) for r in dl)
+    ip_bpp = avg(r.get("bits_per_pixel", 0.0) for r in ip)
+    dl_br = avg(r.get("video_bitrate_mbps", 0.0) for r in dl)
+    ip_br = avg(r.get("video_bitrate_mbps", 0.0) for r in ip)
+    if dl_bpp <= 0:
+        return
+    print(f"Verdict: iPhone recordings carry ~{round(ip_bpp / dl_bpp, 1)}x more data per pixel")
+    print(f"         ({round(ip_br,2)} Mbps vs {round(dl_br,2)} Mbps video bitrate) than the downloaded copies.")
+    print("         Downloaded files were almost certainly re-encoded/compressed by the")
+    print("         platform (and possibly again by the download tool), which is the direct")
+    print("         cause of the visible quality gap.")
 
-    # Same-resolution apples-to-apples comparison (removes resolution as a variable)
-    print("\n" + "-" * 60)
-    print("SAME-RESOLUTION COMPARISON (fairest test)")
-    print("-" * 60)
+
+def _group_by_resolution(results: dict[str, list[VideoInfo]]) -> dict[str, dict[str, list[VideoInfo]]]:
     by_res: dict[str, dict[str, list[VideoInfo]]] = {}
     for lbl, rows in results.items():
         for r in rows:
             by_res.setdefault(r.get("resolution", "unknown"), {}).setdefault(lbl, []).append(r)
+    return by_res
+
+
+def _print_resolution_group(res: str, by_label: dict[str, list[VideoInfo]]) -> None:
+    print(f"\n  Resolution {res}:")
+    for lbl, rows in by_label.items():
+        for r in rows:
+            print(f"    [{lbl}] {r.get('file', '')}")
+            print(f"        codec={r.get('video_codec')} ({r.get('bit_depth')}) fps={r.get('fps')} "
+                  f"bitrate={r.get('video_bitrate_mbps')}Mbps bpp={r.get('bits_per_pixel')} "
+                  f"({r.get('quality_density')})")
+
+
+def _print_same_resolution_comparison(results: dict[str, list[VideoInfo]]) -> None:
+    print("\n" + "-" * 60)
+    print("SAME-RESOLUTION COMPARISON (fairest test)")
+    print("-" * 60)
+    by_res = _group_by_resolution(results)
 
     matched_any = False
     for res, by_label in by_res.items():
         if len(by_label) < 2:
             continue
         matched_any = True
-        print(f"\n  Resolution {res}:")
-        for lbl, rows in by_label.items():
-            for r in rows:
-                print(f"    [{lbl}] {r.get('file', '')}")
-                print(f"        codec={r.get('video_codec')} ({r.get('bit_depth')}) fps={r.get('fps')} "
-                      f"bitrate={r.get('video_bitrate_mbps')}Mbps bpp={r.get('bits_per_pixel')} "
-                      f"({r.get('quality_density')})")
+        _print_resolution_group(res, by_label)
     if not matched_any:
         print("  No two folders share an identical resolution to compare directly.")
         print("  (Bits-per-pixel above already normalizes for resolution differences.)")
+
+
+def print_summary(results: dict[str, list[VideoInfo]]):
+    print("\n" + "=" * 60)
+    print("SUMMARY COMPARISON")
+    print("=" * 60)
+    _print_metric_averages(results)
+    print()
+    _print_verdict(results)
+    # Same-resolution apples-to-apples comparison (removes resolution as a variable)
+    _print_same_resolution_comparison(results)
 
 
 def main():
@@ -268,6 +280,7 @@ def main():
     print_summary(results)
 
     if args.json:
+        import json
         out_path = Path(args.json)
         out_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
         print(f"\nFull metrics written to {out_path}")

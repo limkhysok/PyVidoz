@@ -13,4 +13,5 @@ dependencies = [
 ]
 
 [tool.setuptools]
-py-modules = ["gui_app", "format_videos", "analyze_videos"]
+py-modules = ["main"]
+packages = ["models", "viewmodels", "views"]

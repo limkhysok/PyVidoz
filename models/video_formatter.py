@@ -18,12 +18,12 @@ toward a high-quality delivery profile closer to native phone recordings:
     hardware -- a ~40x cost for smoother in-between frames that most users
     don't need just to hit a 60fps target. It does not add new motion
     detail; frames are duplicated to fill the 60fps timing, matching what a
-    "quality_density"/fps readout from analyze_videos.py checks for.
+    "quality_density"/fps readout from the analyzer (models/video_analyzer.py) checks for.
   - Bitrate raised to a target bits-per-pixel density, computed against the
     OUTPUT resolution (always 1080x1920) rather than the source's, since
     every clip is upscaled/cropped to that size regardless of input size.
     Default 0.19 (see TARGET_BPP) lands actual measured density around
-    ~0.17, in the "Excellent" bucket used by analyze_videos.py -- set above
+    ~0.17, in the "Excellent" bucket used by the analyzer -- set above
     the nominal "Excellent" cutoff of 0.15 because NVENC's VBR rate control
     undershoots the requested average.
 
@@ -44,18 +44,17 @@ many threads the CPU-side work is allowed to use, and the ffmpeg process
 always runs at BELOW_NORMAL priority so it yields to your foreground apps.
 
 Usage:
-    python format_videos.py                        # video_from_download -> video_formatted
-    python format_videos.py --in FOLDER --out FOLDER
-    python format_videos.py --bpp 0.18              # target quality density
-    python format_videos.py --no-interpolate        # keep source fps instead of converting to 60
-    python format_videos.py --encoder nvenc         # force an encoder (auto|cpu|nvenc|qsv|amf)
-    python format_videos.py --cpu-limit 50          # cap CPU-side threads to ~50% of cores
-    python format_videos.py --dry-run               # print ffmpeg commands only
+    python -m models.video_formatter                        # video_from_download -> video_formatted
+    python -m models.video_formatter --in FOLDER --out FOLDER
+    python -m models.video_formatter --bpp 0.18              # target quality density
+    python -m models.video_formatter --no-interpolate        # keep source fps instead of converting to 60
+    python -m models.video_formatter --encoder nvenc         # force an encoder (auto|cpu|nvenc|qsv|amf)
+    python -m models.video_formatter --cpu-limit 50          # cap CPU-side threads to ~50% of cores
+    python -m models.video_formatter --dry-run               # print ffmpeg commands only
 
-This module is also imported by gui_app.py (PySide6 GUI front-end).
+This module is also imported by the GUI (viewmodels/workers.py).
 """
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -65,43 +64,27 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from models.config import (
+    DEFAULT_CPU_LIMIT_PCT,
+    DEFAULT_IN,
+    DEFAULT_OUT,
+    ENCODERS,
+    FFMPEG,
+    FFPROBE,
+    GPU_PRIORITY,
+    MIN_VIDEO_BITRATE_KBPS,
+    TARGET_BPP,
+    TARGET_FPS,
+    TARGET_HEIGHT,
+    TARGET_WIDTH,
+    VIDEO_EXTS,
+)
+from models.utils import ensure_utf8_stdio, parse_fps, probe
+
+ensure_utf8_stdio()
+
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int], None]
-
-# sys.stdout/stderr are typed as TextIO, which has no .reconfigure() -- it's
-# only present on the concrete io.TextIOWrapper CPython actually hands back.
-# Look it up dynamically so static type checkers don't flag a bogus missing
-# attribute, and simply no-op if it's genuinely unavailable (e.g. redirected
-# to something that isn't a TextIOWrapper).
-for _stream in (sys.stdout, sys.stderr):
-    _reconfigure = getattr(_stream, "reconfigure", None)
-    if _reconfigure is not None:
-        _reconfigure(encoding="utf-8")
-
-BASE_DIR = Path(__file__).resolve().parent
-FFPROBE = BASE_DIR / "ffprobe.exe"
-FFMPEG = BASE_DIR / "ffmpeg.exe"
-VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
-
-DEFAULT_IN = BASE_DIR / "video_from_download"
-DEFAULT_OUT = BASE_DIR / "video_formatted"
-
-TARGET_BPP = 0.19       # bits-per-pixel target quality density -- set above the 0.15
-                        # "Excellent" threshold because NVENC VBR undershoots the nominal
-                        # target (measured ~0.16 requested -> ~0.148 actual on a test clip)
-TARGET_FPS = 60
-TARGET_WIDTH = 1080
-TARGET_HEIGHT = 1920
-MIN_VIDEO_BITRATE_KBPS = 4000
-DEFAULT_CPU_LIMIT_PCT = 50   # safety-first default: never silently pin all cores
-
-ENCODERS = {
-    "cpu":   {"codec": "libx265",    "label": "CPU (libx265, software)"},
-    "nvenc": {"codec": "hevc_nvenc", "label": "NVIDIA GPU (NVENC)"},
-    "qsv":   {"codec": "hevc_qsv",   "label": "Intel GPU (Quick Sync)"},
-    "amf":   {"codec": "hevc_amf",   "label": "AMD GPU (AMF)"},
-}
-GPU_PRIORITY = ("nvenc", "qsv", "amf")  # preference order for --encoder auto
 
 
 def detect_gpu_encoders(timeout: float = 15) -> dict[str, bool]:
@@ -137,26 +120,6 @@ def threads_for_cpu_limit(cpu_limit_pct: int | None) -> int:
         return 0
     total = os.cpu_count() or 4
     return max(1, int(total * cpu_limit_pct / 100))
-
-
-def parse_fps(rate_str: str) -> float:
-    try:
-        num, den = rate_str.split("/")
-        den_f = float(den)
-        return float(num) / den_f if den_f else 0.0
-    except (ValueError, IndexError):
-        return 0.0
-
-
-def probe(path: Path) -> dict[str, Any]:
-    cmd = [str(FFPROBE), "-v", "quiet", "-print_format", "json",
-           "-show_format", "-show_streams", str(path)]
-    result = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", check=False)
-    if result.returncode != 0 or not result.stdout.strip():
-        raise RuntimeError(f"ffprobe failed: {result.stderr[:300]}")
-    data: dict[str, Any] = json.loads(result.stdout)
-    return data
 
 
 def get_video_info(path: Path) -> dict[str, Any]:

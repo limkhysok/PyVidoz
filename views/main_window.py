@@ -1,41 +1,13 @@
-#!/usr/bin/env python3
-"""
-PySide6 GUI for the video formatter/upscaler.
-
-Pick an input folder of downloaded videos, pick an output folder, hit Start.
-Re-encoding runs in a background thread so the UI stays responsive. Once
-files land in the output folder, select one in the table and press "Detail"
-to see its full technical profile (resolution, codec, bitrate, bits/pixel
-quality density, etc) via ffprobe -- the same metrics analyze_videos.py
-reports.
-
-Usage:
-    python gui_app.py
-"""
+"""Main application window (View layer). Builds widgets, forwards user
+actions to MainViewModel, and updates widgets from ViewModel signals. No
+business logic or thread management lives here."""
 import os
-import sys
-import threading
-import time
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import (
-    QBrush,
-    QCloseEvent,
-    QColor,
-    QFont,
-    QIcon,
-    QLinearGradient,
-    QPainter,
-    QPalette,
-    QPixmap,
-    QPolygonF,
-)
+from PySide6.QtGui import QCloseEvent, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QApplication,
     QComboBox,
-    QDialog,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -57,341 +29,25 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from analyze_videos import VideoInfo, analyze_file
-from format_videos import (
+from models.config import (
     DEFAULT_CPU_LIMIT_PCT,
     DEFAULT_IN,
     DEFAULT_OUT,
     ENCODERS,
-    FFMPEG,
-    FFPROBE,
     GPU_PRIORITY,
     TARGET_BPP,
-    VIDEO_EXTS,
-    detect_gpu_encoders,
-    resolve_encoder,
-    run_batch,
 )
-
-CPU_LIMIT_OPTIONS = [
-    ("Low (~20% of cores)", 20),
-    ("Medium (~50% of cores) - recommended", 50),
-    ("High (~70% of cores)", 70),
-    ("Unlimited (100%)", 100),
-]
-
-DETAIL_SECTIONS = [
-    ("Video", [
-        ("Resolution", "resolution"),
-        ("Megapixels", "megapixels"),
-        ("FPS", "fps"),
-        ("Video Codec", "video_codec"),
-        ("Profile", "profile"),
-        ("Bit Depth", "bit_depth"),
-        ("Pixel Format", "pix_fmt"),
-        ("Color Space", "color_space"),
-        ("Video Bitrate (Mbps)", "video_bitrate_mbps"),
-        ("Bits / Pixel", "bits_per_pixel"),
-        ("Quality Density", "quality_density"),
-    ]),
-    ("Audio", [
-        ("Audio Codec", "audio_codec"),
-        ("Audio Bitrate (kbps)", "audio_bitrate_kbps"),
-    ]),
-    ("File", [
-        ("File", "file"),
-        ("Overall Bitrate (Mbps)", "overall_bitrate_mbps"),
-        ("Size (MB)", "size_mb"),
-        ("Duration (s)", "duration_s"),
-    ]),
-]
-
-TABLE_COLUMNS = [
-    ("File", "file"),
-    ("Resolution", "resolution"),
-    ("FPS", "fps"),
-    ("Codec", "video_codec"),
-    ("Bit Depth", "bit_depth"),
-    ("Video Bitrate (Mbps)", "video_bitrate_mbps"),
-    ("Bits/Pixel", "bits_per_pixel"),
-    ("Quality", "quality_density"),
-    ("Size (MB)", "size_mb"),
-]
-
-STATUS_COLORS = {
-    "idle": "#808080",
-    "running": "#d68a10",
-    "done": "#2e9e44",
-    "error": "#d64545",
-    "cancelled": "#d68a10",
-}
-
-QUALITY_BADGE_COLORS = {
-    "Excellent": ("#d7f5df", "#1e7a34"),
-    "Good": ("#dbe9fb", "#1a56a8"),
-    "Fair": ("#fdf1d0", "#a1750a"),
-    "Heavily compressed": ("#fbdada", "#a3242c"),
-}
-
-ACCENT = "#2f7dd8"
-ACCENT_HOVER = "#3d8ae6"
-
-STYLE_SHEET = f"""
-QWidget {{
-    font-size: 10.5pt;
-}}
-QGroupBox {{
-    font-weight: 600;
-    border: 1px solid palette(mid);
-    border-radius: 8px;
-    margin-top: 14px;
-    padding-top: 12px;
-}}
-QGroupBox::title {{
-    subcontrol-origin: margin;
-    subcontrol-position: top left;
-    left: 12px;
-    padding: 0 6px;
-}}
-QLineEdit, QComboBox, QDoubleSpinBox {{
-    padding: 5px 8px;
-    border: 1px solid palette(mid);
-    border-radius: 4px;
-    background-color: palette(base);
-    min-height: 20px;
-}}
-QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus {{
-    border: 1px solid {ACCENT};
-}}
-QPushButton {{
-    padding: 7px 16px;
-    border-radius: 5px;
-    border: 1px solid palette(mid);
-    background-color: palette(button);
-}}
-QPushButton:hover {{
-    background-color: palette(light);
-}}
-QPushButton#startButton {{
-    background-color: {ACCENT};
-    color: white;
-    border: none;
-    font-weight: 600;
-    padding: 8px 22px;
-}}
-QPushButton#startButton:hover:enabled {{
-    background-color: {ACCENT_HOVER};
-}}
-QPushButton#startButton:disabled {{
-    background-color: #9fb8d6;
-    color: #f0f0f0;
-}}
-QPushButton#cancelButton:enabled {{
-    border: 1px solid #d64545;
-    color: #d64545;
-    font-weight: 600;
-}}
-QPushButton#cancelButton:hover:enabled {{
-    background-color: #d64545;
-    color: white;
-}}
-QProgressBar {{
-    border: 1px solid palette(mid);
-    border-radius: 5px;
-    text-align: center;
-    min-height: 22px;
-}}
-QProgressBar::chunk {{
-    background-color: {ACCENT};
-    border-radius: 4px;
-}}
-QPlainTextEdit {{
-    background-color: #1e1e1e;
-    color: #d4d4d4;
-    border: 1px solid palette(mid);
-    border-radius: 6px;
-    padding: 6px;
-    selection-background-color: {ACCENT};
-}}
-QTableWidget {{
-    border: 1px solid palette(mid);
-    border-radius: 6px;
-    gridline-color: palette(mid);
-}}
-QHeaderView::section {{
-    padding: 6px;
-    border: none;
-    border-bottom: 2px solid palette(mid);
-    font-weight: 600;
-}}
-QCheckBox {{
-    spacing: 8px;
-}}
-QTabWidget::pane {{
-    border: 1px solid palette(mid);
-    border-radius: 8px;
-    top: -1px;
-}}
-QTabBar::tab {{
-    background: transparent;
-    padding: 8px 18px;
-    margin-right: 4px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
-}}
-QTabBar::tab:selected {{
-    background: palette(button);
-    border-bottom: 2px solid {ACCENT};
-    font-weight: 600;
-}}
-QTabBar::tab:hover:!selected {{
-    background: palette(light);
-}}
-"""
-
-
-def build_dark_palette() -> QPalette:
-    """CapCut-style dark palette, applied regardless of the OS theme setting."""
-    window = QColor("#1b1d23")
-    base = QColor("#15161b")
-    alt_base = QColor("#20222a")
-    button = QColor("#252831")
-    text = QColor("#e6e6e6")
-    disabled_text = QColor("#6b6f7a")
-
-    palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, window)
-    palette.setColor(QPalette.ColorRole.WindowText, text)
-    palette.setColor(QPalette.ColorRole.Base, base)
-    palette.setColor(QPalette.ColorRole.AlternateBase, alt_base)
-    palette.setColor(QPalette.ColorRole.ToolTipBase, window)
-    palette.setColor(QPalette.ColorRole.ToolTipText, text)
-    palette.setColor(QPalette.ColorRole.Text, text)
-    palette.setColor(QPalette.ColorRole.Button, button)
-    palette.setColor(QPalette.ColorRole.ButtonText, text)
-    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ff5c5c"))
-    palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
-    palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-    palette.setColor(QPalette.ColorRole.PlaceholderText, disabled_text)
-    palette.setColor(QPalette.ColorRole.Mid, QColor("#33363f"))
-    palette.setColor(QPalette.ColorRole.Light, QColor("#2c2f38"))
-    palette.setColor(QPalette.ColorRole.Dark, QColor("#0f1014"))
-    for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
-        palette.setColor(QPalette.ColorGroup.Disabled, role, disabled_text)
-    return palette
-
-
-def make_app_icon(size: int = 64) -> QIcon:
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    gradient = QLinearGradient(0, 0, size, size)
-    gradient.setColorAt(0, QColor(ACCENT))
-    gradient.setColorAt(1, QColor("#1a4f8a"))
-    painter.setBrush(QBrush(gradient))
-    painter.setPen(Qt.PenStyle.NoPen)
-    radius = size * 0.22
-    painter.drawRoundedRect(0, 0, size, size, radius, radius)
-    triangle = QPolygonF([
-        QPointF(size * 0.38, size * 0.27),
-        QPointF(size * 0.38, size * 0.73),
-        QPointF(size * 0.75, size * 0.5),
-    ])
-    painter.setBrush(QColor("white"))
-    painter.drawPolygon(triangle)
-    painter.end()
-    return QIcon(pixmap)
-
-
-class FormatWorker(QThread):
-    logMessage = Signal(str)
-    progressChanged = Signal(int, int)
-    finishedBatch = Signal(int, int, int)
-
-    def __init__(self, in_folder: Path, out_folder: Path, bpp: float,
-                 interpolate: bool, skip_existing: bool, encoder: str, cpu_limit_pct: int):
-        super().__init__()
-        self.in_folder = in_folder
-        self.out_folder = out_folder
-        self.bpp = bpp
-        self.interpolate = interpolate
-        self.skip_existing = skip_existing
-        self.encoder = encoder
-        self.cpu_limit_pct = cpu_limit_pct
-        self.stop_event = threading.Event()
-
-    def run(self):
-        ok, fail, skipped = run_batch(
-            self.in_folder, self.out_folder, self.bpp, self.interpolate,
-            dry_run=False, skip_existing=self.skip_existing,
-            log=lambda msg: self.logMessage.emit(msg),
-            stop_event=self.stop_event,
-            progress=lambda done, total: self.progressChanged.emit(done, total),
-            encoder=self.encoder, cpu_limit_pct=self.cpu_limit_pct,
-        )
-        self.finishedBatch.emit(ok, fail, skipped)
-
-    def request_stop(self):
-        self.stop_event.set()
-
-
-class EncoderDetectWorker(QThread):
-    detected = Signal(dict)
-
-    def run(self) -> None:
-        self.detected.emit(detect_gpu_encoders())
-
-
-class ProbeWorker(QThread):
-    rowReady = Signal(dict)
-    finishedProbing = Signal()
-
-    def __init__(self, folder: Path):
-        super().__init__()
-        self.folder = folder
-
-    def run(self) -> None:
-        if self.folder.exists():
-            files = [p for p in sorted(self.folder.iterdir())
-                     if p.is_file() and p.suffix.lower() in VIDEO_EXTS]
-            for p in files:
-                info: VideoInfo
-                try:
-                    info = analyze_file(p)
-                    info["path"] = str(p)
-                except Exception as e:  # noqa: BLE001 - probing must never crash the batch
-                    info = {"file": p.name, "path": str(p), "error": str(e)}
-                self.rowReady.emit(info)
-        self.finishedProbing.emit()
-
-
-class DetailDialog(QDialog):
-    def __init__(self, info: VideoInfo, parent: QWidget | None = None):
-        super().__init__(parent)
-        self.setWindowTitle(f"Video Details - {info.get('file', '')}")
-        self.resize(460, 560)
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-
-        if "error" in info:
-            layout.addWidget(QLabel(f"Could not read this file:\n{info['error']}"))
-        else:
-            for section_title, fields in DETAIL_SECTIONS:
-                box = QGroupBox(section_title)
-                form = QFormLayout(box)
-                form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-                for label, key in fields:
-                    value = info.get(key, "n/a")
-                    value_label = QLabel(str(value))
-                    value_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-                    form.addRow(QLabel(f"{label}:"), value_label)
-                layout.addWidget(box)
-
-        close_btn = QPushButton("Close")
-        close_btn.clicked.connect(self.accept)
-        layout.addWidget(close_btn)
+from models.video_analyzer import VideoInfo
+from viewmodels.main_view_model import MainViewModel
+from views.detail_dialog import DetailDialog
+from views.theme import (
+    CPU_LIMIT_OPTIONS,
+    QUALITY_BADGE_COLORS,
+    STATUS_COLORS,
+    STYLE_SHEET,
+    TABLE_COLUMNS,
+    make_app_icon,
+)
 
 
 class MainWindow(QMainWindow):
@@ -403,17 +59,13 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 600)
         self.setStyleSheet(STYLE_SHEET)
 
-        self.worker: FormatWorker | None = None
-        self.probe_worker: ProbeWorker | None = None
-        self.encoder_detect_worker: EncoderDetectWorker | None = None
-        self._available_encoders: dict[str, bool] = {"cpu": True}
-        self.row_info: dict[int, VideoInfo] = {}
-        self._cancel_requested = False
-        self._start_time: float | None = None
-
-        self.elapsed_timer = QTimer(self)
-        self.elapsed_timer.setInterval(1000)
-        self.elapsed_timer.timeout.connect(self._update_elapsed)
+        self.view_model = MainViewModel()
+        self.view_model.logMessage.connect(self._on_log)
+        self.view_model.progressChanged.connect(self._on_progress)
+        self.view_model.batchFinished.connect(self._on_batch_finished)
+        self.view_model.encodersDetected.connect(self._on_encoders_detected)
+        self.view_model.rowReady.connect(self._add_row)
+        self.view_model.elapsedChanged.connect(self._on_elapsed_changed)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -431,12 +83,12 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._build_log_group(), "Logs")
         root.addWidget(tabs, stretch=1)
 
-        if not FFMPEG.exists() or not FFPROBE.exists():
+        if not self.view_model.ffmpeg_available():
             QMessageBox.critical(self, "Missing ffmpeg",
-                                  f"ffmpeg.exe / ffprobe.exe not found next to this script:\n{FFMPEG.parent}")
+                                  "ffmpeg.exe / ffprobe.exe not found next to the project root.")
 
         self.refresh_table()
-        self.start_encoder_detection()
+        self.view_model.start_encoder_detection()
 
     # ---- UI builders ----------------------------------------------------
 
@@ -646,13 +298,7 @@ class MainWindow(QMainWindow):
         self.status_label.setText(text)
         self.status_label.setStyleSheet(f"color: {STATUS_COLORS[kind]}; font-weight: 600;")
 
-    def start_encoder_detection(self):
-        self.encoder_detect_worker = EncoderDetectWorker()
-        self.encoder_detect_worker.detected.connect(self._on_encoders_detected)
-        self.encoder_detect_worker.start()
-
     def _on_encoders_detected(self, available: dict[str, bool]):
-        self._available_encoders = available
         self.encoder_combo.clear()
         gpu_found = [k for k in GPU_PRIORITY if available.get(k)]
         self.encoder_combo.addItem(ENCODERS["cpu"]["label"], "cpu")
@@ -674,7 +320,7 @@ class MainWindow(QMainWindow):
         if not in_folder.exists():
             QMessageBox.warning(self, "Input folder not found", f"{in_folder} does not exist.")
             return
-        if not FFMPEG.exists() or not FFPROBE.exists():
+        if not self.view_model.ffmpeg_available():
             QMessageBox.critical(self, "Missing ffmpeg", "ffmpeg.exe / ffprobe.exe not found.")
             return
 
@@ -683,38 +329,23 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(0)
         self.start_btn.setEnabled(False)
         self.cancel_btn.setEnabled(True)
-        self._cancel_requested = False
         self._set_status("Running...", "running")
-        self._start_time = time.time()
         self.elapsed_label.setText("Elapsed: 00:00")
-        self.elapsed_timer.start()
 
-        self.worker = FormatWorker(
+        self.view_model.start_batch(
             in_folder, out_folder,
             bpp=self.bpp_spin.value(),
-            interpolate=True,
-            skip_existing=True,
-            encoder=resolve_encoder(self.encoder_combo.currentData(), self._available_encoders),
+            encoder_choice=self.encoder_combo.currentData(),
             cpu_limit_pct=self.cpu_limit_combo.currentData(),
         )
-        self.worker.logMessage.connect(self._on_log)
-        self.worker.progressChanged.connect(self._on_progress)
-        self.worker.finishedBatch.connect(self._on_batch_finished)
-        self.worker.start()
 
     def cancel_batch(self):
-        if self.worker is not None:
-            self.worker.request_stop()
-            self._cancel_requested = True
-            self._on_log("Cancelling... will stop after the current file finishes.")
-            self._set_status("Cancelling...", "cancelled")
-            self.cancel_btn.setEnabled(False)
+        self.view_model.cancel_batch()
+        self._set_status("Cancelling...", "cancelled")
+        self.cancel_btn.setEnabled(False)
 
-    def _update_elapsed(self):
-        if self._start_time is None:
-            return
-        secs = int(time.time() - self._start_time)
-        self.elapsed_label.setText(f"Elapsed: {secs // 60:02d}:{secs % 60:02d}")
+    def _on_elapsed_changed(self, text: str):
+        self.elapsed_label.setText(text)
 
     def _on_log(self, msg: str):
         self.log_view.appendPlainText(msg)
@@ -726,9 +357,7 @@ class MainWindow(QMainWindow):
     def _on_batch_finished(self, ok: int, fail: int, skipped: int):
         self.start_btn.setEnabled(True)
         self.cancel_btn.setEnabled(False)
-        self.elapsed_timer.stop()
-        self._update_elapsed()
-        if self._cancel_requested:
+        if self.view_model.cancel_requested:
             self._set_status("Cancelled", "cancelled")
         elif fail:
             self._set_status(f"Done ({fail} failed)", "error")
@@ -741,18 +370,12 @@ class MainWindow(QMainWindow):
     def refresh_table(self):
         out_folder = Path(self.out_edit.text())
         self.table.setRowCount(0)
-        self.row_info.clear()
         self.detail_btn.setEnabled(False)
-        if not out_folder.exists():
-            return
-        self.probe_worker = ProbeWorker(out_folder)
-        self.probe_worker.rowReady.connect(self._add_row)
-        self.probe_worker.start()
+        self.view_model.refresh_table(out_folder)
 
     def _add_row(self, info: VideoInfo):
         row = self.table.rowCount()
         self.table.insertRow(row)
-        self.row_info[row] = info
         if "error" in info:
             item = QTableWidgetItem(f"{info.get('file', '')} (unreadable)")
             self.table.setItem(row, 0, item)
@@ -782,7 +405,7 @@ class MainWindow(QMainWindow):
         rows = self.table.selectionModel().selectedRows()
         if not rows:
             return
-        info = self.row_info.get(rows[0].row())
+        info = self.view_model.get_row_info(rows[0].row())
         if info is None:
             return
         dlg = DetailDialog(info, self)
@@ -794,7 +417,7 @@ class MainWindow(QMainWindow):
         os.startfile(str(out_folder))
 
     def closeEvent(self, event: QCloseEvent):
-        if self.worker is not None and self.worker.isRunning():
+        if self.view_model.is_running():
             reply = QMessageBox.question(
                 self, "Formatting in progress",
                 "A batch is still running. Stop it and quit?",
@@ -803,20 +426,5 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-            self.worker.request_stop()
-            self.worker.wait(10000)
+            self.view_model.request_stop_and_wait(10000)
         event.accept()
-
-
-def main():
-    app = QApplication(sys.argv)
-    app.setStyle("Fusion")
-    app.setPalette(build_dark_palette())
-    app.setFont(QFont("Segoe UI", 10))
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
-
-
-if __name__ == "__main__":
-    main()

@@ -9,7 +9,8 @@ re-compress videos before you download them.
 Videos downloaded from social platforms are almost always re-encoded by the
 platform (and sometimes again by the download tool) into low-bitrate,
 8-bit, sub-1080p files -- noticeably worse than the original phone
-recording. `analyze_videos.py` in this repo quantifies that gap directly:
+recording. The analyzer in this repo (`python -m models.video_analyzer`)
+quantifies that gap directly:
 comparing downloaded clips against native iPhone recordings typically shows
 the iPhone files carrying several times more data per pixel at the same
 resolution.
@@ -42,8 +43,7 @@ For every video in an input folder:
   upscaling.
 - **Bitrate** targeted to a bits-per-pixel quality density (default `0.19`,
   tuned so the actual measured output lands in the "Excellent" density
-  bucket used by `analyze_videos.py`, compensating for NVENC's VBR
-  undershoot).
+  bucket used by the analyzer, compensating for NVENC's VBR undershoot).
 - **Color space** stays SDR `bt709` -- it is not relabeled as HDR `bt2020`,
   since relabeling SDR pixel data as HDR without real HDR mastering info
   makes colors look wrong, not better.
@@ -84,12 +84,12 @@ pip install -e .
 ```
 
 Download `ffmpeg.exe`/`ffprobe.exe` (see [Requirements](#requirements) above)
-and drop them into the project root, next to `gui_app.py`.
+and drop them into the project root, next to `main.py`.
 
 Verify the setup without encoding anything:
 
 ```bash
-python format_videos.py --dry-run
+python -m models.video_formatter --dry-run
 ```
 
 If it prints ffmpeg commands instead of an error about missing
@@ -100,7 +100,7 @@ If it prints ffmpeg commands instead of an error about missing
 ### GUI
 
 ```bash
-python gui_app.py
+python main.py
 ```
 
 Pick an input folder of downloaded videos and an output folder, choose
@@ -111,13 +111,13 @@ the table and press "Detail" to see its full technical profile.
 ### CLI
 
 ```bash
-python format_videos.py                        # video_from_download -> video_formatted
-python format_videos.py --in FOLDER --out FOLDER
-python format_videos.py --bpp 0.19              # target quality density
-python format_videos.py --no-interpolate        # keep source fps instead of converting to 60
-python format_videos.py --encoder nvenc         # force an encoder (auto|cpu|nvenc|qsv|amf)
-python format_videos.py --cpu-limit 50          # cap CPU-side threads to ~50% of cores
-python format_videos.py --dry-run               # print ffmpeg commands only
+python -m models.video_formatter                        # video_from_download -> video_formatted
+python -m models.video_formatter --in FOLDER --out FOLDER
+python -m models.video_formatter --bpp 0.19              # target quality density
+python -m models.video_formatter --no-interpolate        # keep source fps instead of converting to 60
+python -m models.video_formatter --encoder nvenc         # force an encoder (auto|cpu|nvenc|qsv|amf)
+python -m models.video_formatter --cpu-limit 50          # cap CPU-side threads to ~50% of cores
+python -m models.video_formatter --dry-run               # print ffmpeg commands only
 ```
 
 Encoder backend can run on CPU (`libx265`, software) or GPU (NVENC/QSV/AMF
@@ -130,8 +130,8 @@ encoders in ffmpeg.
 ### Analyzer / comparator
 
 ```bash
-python analyze_videos.py
-python analyze_videos.py --json report.json
+python -m models.video_analyzer
+python -m models.video_analyzer --json report.json
 ```
 
 Probes every file in `video_from_iphone/` and `video_from_download/` with
@@ -162,24 +162,38 @@ difference on anyway.
 
 If you want the smoother (but much slower) motion-compensated interpolation
 back, swap the `fps={TARGET_FPS}` filter in `build_filters()`
-(`format_videos.py`) for `minterpolate=fps={TARGET_FPS}:mi_mode=mci:mc_mode=aobmc:vsbmc=1`.
+(`models/video_formatter.py`) for `minterpolate=fps={TARGET_FPS}:mi_mode=mci:mc_mode=aobmc:vsbmc=1`.
 
 ## Project structure
 
+The GUI follows MVVM. `main.py` is the entry point; business logic (Model),
+Qt state/orchestration (ViewModel), and widgets (View) live in separate
+packages:
+
 ```
-gui_app.py           PySide6 GUI front-end (imports format_videos + analyze_videos)
-format_videos.py     Core batch re-encoding logic; also runnable as a CLI
-analyze_videos.py    ffprobe-based quality analyzer/comparator; also runnable as a CLI
-pyproject.toml       Project metadata + dependencies (PySide6)
-.gitignore           Excludes ffmpeg/ffprobe binaries, video I/O folders, build artifacts
+main.py               GUI entry point -- python main.py to launch
+models/                Model layer: pure domain logic, no Qt dependency
+    config.py              shared paths/constants (ffmpeg paths, target bpp/fps/res, encoders)
+    utils.py                shared ffprobe/parsing helpers
+    video_analyzer.py       quality analyzer/comparator; also runnable as a CLI (python -m models.video_analyzer)
+    video_formatter.py      batch re-encoding logic; also runnable as a CLI (python -m models.video_formatter)
+viewmodels/            ViewModel layer: Qt QObjects, no widget code
+    workers.py               background QThread workers (formatting/probing/encoder detection)
+    main_view_model.py       MainViewModel -- owns workers + batch/probe state, exposes Qt signals
+views/                 View layer: PySide6 widgets only
+    theme.py                 stylesheet, palette, icon, display-config constants
+    detail_dialog.py          per-file technical profile dialog
+    main_window.py            main window; binds to MainViewModel, no business logic
+pyproject.toml        Project metadata + dependencies (PySide6)
+.gitignore            Excludes ffmpeg/ffprobe binaries, video I/O folders, build artifacts
 ```
 
 ## Folder layout
 
 ```
 video_from_download/   input videos to process (gitignored, personal data)
-video_formatted/        output of format_videos.py / the GUI (gitignored)
-video_from_iphone/      reference clips for analyze_videos.py to compare against (gitignored)
+video_formatted/        output of the GUI / python -m models.video_formatter (gitignored)
+video_from_iphone/      reference clips for python -m models.video_analyzer to compare against (gitignored)
 ```
 
 These folders are gitignored since they hold personal/large media files, not
