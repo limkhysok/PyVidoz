@@ -22,9 +22,9 @@ MIN_VIDEO_BITRATE_KBPS = 4000
 DEFAULT_CPU_LIMIT_PCT = 50   # safety-first default: never silently pin all cores
 
 ENCODERS = {
-    "cpu":   {"codec": "libx265",    "label": "CPU (libx265, software)"},
-    "nvenc": {"codec": "hevc_nvenc", "label": "NVIDIA GPU (NVENC)"},
-    "qsv":   {"codec": "hevc_qsv",   "label": "Intel GPU (Quick Sync)"},
-    "amf":   {"codec": "hevc_amf",   "label": "AMD GPU (AMF)"},
+    "cpu":   {"codec": "libx265",    "label": "CPU (libx265)"},
+    "nvenc": {"codec": "hevc_nvenc", "label": "NVIDIA (NVENC)"},
+    "qsv":   {"codec": "hevc_qsv",   "label": "Intel (QSV)"},
+    "amf":   {"codec": "hevc_amf",   "label": "AMD (AMF)"},
 }
 GPU_PRIORITY = ("nvenc", "qsv", "amf")  # preference order for --encoder auto

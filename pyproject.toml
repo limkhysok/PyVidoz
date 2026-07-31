@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "PySide6==6.9.2",
+    "qtawesome==1.4.2",
 ]
 
 [tool.setuptools]

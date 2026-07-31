@@ -85,6 +85,7 @@ ensure_utf8_stdio()
 
 LogFn = Callable[[str], None]
 ProgressFn = Callable[[int, int], None]
+PauseStateFn = Callable[[bool], None]
 
 
 def detect_gpu_encoders(timeout: float = 15) -> dict[str, bool]:
@@ -261,9 +262,30 @@ def format_video(src: Path, dst: Path, bpp: float, interpolate: bool, dry_run: b
     return result == "ok"
 
 
+def _wait_while_paused(pause_event: threading.Event | None, stop_event: threading.Event | None,
+                        log: LogFn, on_pause_state: PauseStateFn | None = None) -> None:
+    """Holds between files while paused. Cancelling breaks out of the wait too."""
+    if pause_event is None or not pause_event.is_set():
+        return
+    log("Paused before the next file -- click Resume to continue.")
+    if on_pause_state is not None:
+        on_pause_state(True)
+    try:
+        while pause_event.is_set():
+            if stop_event is not None and stop_event.is_set():
+                return
+            time.sleep(0.3)
+    finally:
+        if on_pause_state is not None:
+            on_pause_state(False)
+    log("Resumed.")
+
+
 def run_batch(in_folder: Path, out_folder: Path, bpp: float = TARGET_BPP,
               interpolate: bool = True, dry_run: bool = False, skip_existing: bool = True,
               log: LogFn = print, stop_event: threading.Event | None = None,
+              pause_event: threading.Event | None = None,
+              on_pause_state: PauseStateFn | None = None,
               progress: ProgressFn | None = None,
               encoder: str = "cpu",
               cpu_limit_pct: int | None = DEFAULT_CPU_LIMIT_PCT) -> tuple[int, int, int]:
@@ -279,6 +301,7 @@ def run_batch(in_folder: Path, out_folder: Path, bpp: float = TARGET_BPP,
         return ok, fail, skipped
 
     for idx, src in enumerate(files, 1):
+        _wait_while_paused(pause_event, stop_event, log, on_pause_state)
         if stop_event is not None and stop_event.is_set():
             log("Batch cancelled.")
             break

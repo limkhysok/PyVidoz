@@ -1,8 +1,11 @@
 """Styling, palette, icon, and display-config constants for the View layer."""
+from pathlib import Path
+
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QFontDatabase,
     QIcon,
     QLinearGradient,
     QPainter,
@@ -11,10 +14,19 @@ from PySide6.QtGui import (
     QPolygonF,
 )
 
+FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+FONT_MONO = "JetBrains Mono"
+
+
+def load_custom_fonts() -> None:
+    """Register the bundled JetBrains Mono font files with Qt."""
+    for font_file in FONTS_DIR.glob("*.ttf"):
+        QFontDatabase.addApplicationFont(str(font_file))
+
 CPU_LIMIT_OPTIONS = [
-    ("Low (~20% of cores)", 20),
-    ("Medium (~50% of cores) - recommended", 50),
-    ("High (~70% of cores)", 70),
+    ("Low (20%)", 20),
+    ("Medium (50%) - recommended", 50),
+    ("High (70%)", 70),
     ("Unlimited (100%)", 100),
 ]
 
@@ -56,32 +68,51 @@ TABLE_COLUMNS = [
     ("Size (MB)", "size_mb"),
 ]
 
+# Nord ("Nordic Dark") palette — https://www.nordtheme.com/
+NORD0 = "#2e3440"
+NORD1 = "#3b4252"
+NORD2 = "#434c5e"
+NORD3 = "#4c566a"
+NORD4 = "#d8dee9"
+NORD6 = "#eceff4"
+NORD7 = "#8fbcbb"
+NORD8 = "#88c0d0"
+NORD11 = "#bf616a"
+NORD12 = "#d08770"
+NORD13 = "#ebcb8b"
+NORD14 = "#a3be8c"
+
 STATUS_COLORS = {
-    "idle": "#808080",
-    "running": "#d68a10",
-    "done": "#2e9e44",
-    "error": "#d64545",
-    "cancelled": "#d68a10",
+    "idle": NORD3,
+    "running": NORD13,
+    "done": NORD14,
+    "error": NORD11,
+    "cancelled": NORD12,
 }
 
 QUALITY_BADGE_COLORS = {
-    "Excellent": ("#d7f5df", "#1e7a34"),
-    "Good": ("#dbe9fb", "#1a56a8"),
-    "Fair": ("#fdf1d0", "#a1750a"),
-    "Heavily compressed": ("#fbdada", "#a3242c"),
+    "Excellent": (NORD1, NORD14),
+    "Good": (NORD1, NORD8),
+    "Fair": (NORD1, NORD13),
+    "Heavily compressed": (NORD1, NORD11),
 }
 
-ACCENT = "#2f7dd8"
-ACCENT_HOVER = "#3d8ae6"
+ACCENT = NORD8
+ACCENT_HOVER = NORD7
+
+ICON_COLOR = NORD4
+ICON_COLOR_DISABLED = NORD3
+ICON_COLOR_DANGER = NORD11
 
 STYLE_SHEET = f"""
 QWidget {{
-    font-size: 10.5pt;
+    font-family: "{FONT_MONO}";
+    font-size: 9pt;
 }}
 QGroupBox {{
     font-weight: 600;
     border: 1px solid palette(mid);
-    border-radius: 8px;
+    border-radius: 0px;
     margin-top: 14px;
     padding-top: 12px;
 }}
@@ -91,10 +122,18 @@ QGroupBox::title {{
     left: 12px;
     padding: 0 6px;
 }}
+QFrame#sidebarPanel {{
+    border: none;
+    border-right: 1px solid palette(mid);
+}}
+QFrame#optionsSection, QFrame#folderSection {{
+    border: none;
+    border-bottom: 1px solid palette(mid);
+}}
 QLineEdit, QComboBox, QDoubleSpinBox {{
     padding: 5px 8px;
     border: 1px solid palette(mid);
-    border-radius: 4px;
+    border-radius: 0px;
     background-color: palette(base);
     min-height: 20px;
 }}
@@ -103,7 +142,7 @@ QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus {{
 }}
 QPushButton {{
     padding: 7px 16px;
-    border-radius: 5px;
+    border-radius: 0px;
     border: 1px solid palette(mid);
     background-color: palette(button);
 }}
@@ -112,7 +151,7 @@ QPushButton:hover {{
 }}
 QPushButton#startButton {{
     background-color: {ACCENT};
-    color: white;
+    color: {NORD0};
     border: none;
     font-weight: 600;
     padding: 8px 22px;
@@ -121,39 +160,48 @@ QPushButton#startButton:hover:enabled {{
     background-color: {ACCENT_HOVER};
 }}
 QPushButton#startButton:disabled {{
-    background-color: #9fb8d6;
-    color: #f0f0f0;
+    background-color: {NORD3};
+    color: {NORD4};
 }}
 QPushButton#cancelButton:enabled {{
-    border: 1px solid #d64545;
-    color: #d64545;
+    border: 1px solid {NORD11};
+    color: {NORD11};
     font-weight: 600;
 }}
 QPushButton#cancelButton:hover:enabled {{
-    background-color: #d64545;
-    color: white;
+    background-color: {NORD11};
+    color: {NORD6};
+}}
+QPushButton#pauseButton:enabled {{
+    border: 1px solid {NORD12};
+    color: {NORD12};
+    font-weight: 600;
+}}
+QPushButton#pauseButton:hover:enabled {{
+    background-color: {NORD12};
+    color: {NORD6};
 }}
 QProgressBar {{
     border: 1px solid palette(mid);
-    border-radius: 5px;
+    border-radius: 0px;
     text-align: center;
     min-height: 22px;
 }}
 QProgressBar::chunk {{
     background-color: {ACCENT};
-    border-radius: 4px;
+    border-radius: 0px;
 }}
 QPlainTextEdit {{
-    background-color: #1e1e1e;
-    color: #d4d4d4;
+    background-color: {NORD0};
+    color: {NORD4};
     border: 1px solid palette(mid);
-    border-radius: 6px;
+    border-radius: 0px;
     padding: 6px;
     selection-background-color: {ACCENT};
 }}
 QTableWidget {{
     border: 1px solid palette(mid);
-    border-radius: 6px;
+    border-radius: 0px;
     gridline-color: palette(mid);
 }}
 QHeaderView::section {{
@@ -167,15 +215,15 @@ QCheckBox {{
 }}
 QTabWidget::pane {{
     border: 1px solid palette(mid);
-    border-radius: 8px;
+    border-radius: 0px;
     top: -1px;
 }}
 QTabBar::tab {{
     background: transparent;
     padding: 8px 18px;
     margin-right: 4px;
-    border-top-left-radius: 6px;
-    border-top-right-radius: 6px;
+    border-top-left-radius: 0px;
+    border-top-right-radius: 0px;
 }}
 QTabBar::tab:selected {{
     background: palette(button);
@@ -189,13 +237,13 @@ QTabBar::tab:hover:!selected {{
 
 
 def build_dark_palette() -> QPalette:
-    """CapCut-style dark palette, applied regardless of the OS theme setting."""
-    window = QColor("#1b1d23")
-    base = QColor("#15161b")
-    alt_base = QColor("#20222a")
-    button = QColor("#252831")
-    text = QColor("#e6e6e6")
-    disabled_text = QColor("#6b6f7a")
+    """Nord ("Nordic Dark") palette, applied regardless of the OS theme setting."""
+    window = QColor(NORD0)
+    base = QColor("#262b35")
+    alt_base = QColor(NORD1)
+    button = QColor(NORD1)
+    text = QColor(NORD6)
+    disabled_text = QColor(NORD3)
 
     palette = QPalette()
     palette.setColor(QPalette.ColorRole.Window, window)
@@ -207,14 +255,14 @@ def build_dark_palette() -> QPalette:
     palette.setColor(QPalette.ColorRole.Text, text)
     palette.setColor(QPalette.ColorRole.Button, button)
     palette.setColor(QPalette.ColorRole.ButtonText, text)
-    palette.setColor(QPalette.ColorRole.BrightText, QColor("#ff5c5c"))
+    palette.setColor(QPalette.ColorRole.BrightText, QColor(NORD11))
     palette.setColor(QPalette.ColorRole.Link, QColor(ACCENT))
     palette.setColor(QPalette.ColorRole.Highlight, QColor(ACCENT))
-    palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+    palette.setColor(QPalette.ColorRole.HighlightedText, QColor(NORD0))
     palette.setColor(QPalette.ColorRole.PlaceholderText, disabled_text)
-    palette.setColor(QPalette.ColorRole.Mid, QColor("#33363f"))
-    palette.setColor(QPalette.ColorRole.Light, QColor("#2c2f38"))
-    palette.setColor(QPalette.ColorRole.Dark, QColor("#0f1014"))
+    palette.setColor(QPalette.ColorRole.Mid, QColor(NORD2))
+    palette.setColor(QPalette.ColorRole.Light, QColor(NORD3))
+    palette.setColor(QPalette.ColorRole.Dark, QColor("#242933"))
     for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
         palette.setColor(QPalette.ColorGroup.Disabled, role, disabled_text)
     return palette

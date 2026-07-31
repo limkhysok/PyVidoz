@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Entry point for the PyVid GUI application.
+Entry point for the PyVidoz GUI application.
 
 Pick an input folder of downloaded videos, pick an output folder, hit Start.
 Re-encoding runs in a background thread so the UI stays responsive. Once
@@ -17,14 +17,17 @@ from PySide6.QtGui import QFont
 from PySide6.QtWidgets import QApplication
 
 from views.main_window import MainWindow
-from views.theme import build_dark_palette
+from views.theme import FONT_MONO, build_dark_palette, load_custom_fonts
 
 
 def main():
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    load_custom_fonts()
     app.setPalette(build_dark_palette())
-    app.setFont(QFont("Segoe UI", 10))
+    font = QFont(FONT_MONO)
+    font.setPointSize(9)
+    app.setFont(font)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())

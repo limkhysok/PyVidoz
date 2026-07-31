@@ -1,5 +1,7 @@
 # PyVidoz
 
+![PyVidoz](images/bibi.png)
+
 A batch video formatter/upscaler for downloaded social-media clips (TikTok,
 etc), built to claw back some of the quality lost when platforms
 re-compress videos before you download them.

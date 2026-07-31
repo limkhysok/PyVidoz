@@ -14,6 +14,7 @@ class FormatWorker(QThread):
     logMessage = Signal(str)
     progressChanged = Signal(int, int)
     finishedBatch = Signal(int, int, int)
+    pauseStateChanged = Signal(bool)
 
     def __init__(self, in_folder: Path, out_folder: Path, bpp: float,
                  interpolate: bool, skip_existing: bool, encoder: str, cpu_limit_pct: int):
@@ -26,6 +27,7 @@ class FormatWorker(QThread):
         self.encoder = encoder
         self.cpu_limit_pct = cpu_limit_pct
         self.stop_event = threading.Event()
+        self.pause_event = threading.Event()
 
     def run(self):
         ok, fail, skipped = run_batch(
@@ -33,6 +35,8 @@ class FormatWorker(QThread):
             dry_run=False, skip_existing=self.skip_existing,
             log=lambda msg: self.logMessage.emit(msg),
             stop_event=self.stop_event,
+            pause_event=self.pause_event,
+            on_pause_state=lambda active: self.pauseStateChanged.emit(active),
             progress=lambda done, total: self.progressChanged.emit(done, total),
             encoder=self.encoder, cpu_limit_pct=self.cpu_limit_pct,
         )
@@ -40,6 +44,14 @@ class FormatWorker(QThread):
 
     def request_stop(self):
         self.stop_event.set()
+        # Cancelling must also break out of a paused wait.
+        self.pause_event.clear()
+
+    def request_pause(self):
+        self.pause_event.set()
+
+    def request_resume(self):
+        self.pause_event.clear()
 
 
 class EncoderDetectWorker(QThread):

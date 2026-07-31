@@ -20,6 +20,7 @@ class MainViewModel(QObject):
     rowReady = Signal(dict)
     probingFinished = Signal()
     elapsedChanged = Signal(str)
+    pauseStateChanged = Signal(bool)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -29,6 +30,7 @@ class MainViewModel(QObject):
         self.available_encoders: dict[str, bool] = {"cpu": True}
         self.row_info: dict[int, VideoInfo] = {}
         self.cancel_requested = False
+        self.is_paused = False
         self._start_time: float | None = None
 
         self._elapsed_timer = QTimer(self)
@@ -60,6 +62,7 @@ class MainViewModel(QObject):
                      encoder_choice: str, cpu_limit_pct: int) -> None:
         encoder = resolve_encoder(encoder_choice, self.available_encoders)
         self.cancel_requested = False
+        self.is_paused = False
         self._start_time = time.time()
         self._elapsed_timer.start()
         self.elapsedChanged.emit("Elapsed: 00:00")
@@ -75,13 +78,25 @@ class MainViewModel(QObject):
         self.worker.logMessage.connect(self.logMessage.emit)
         self.worker.progressChanged.connect(self.progressChanged.emit)
         self.worker.finishedBatch.connect(self._on_batch_finished)
+        self.worker.pauseStateChanged.connect(self.pauseStateChanged.emit)
         self.worker.start()
 
     def cancel_batch(self) -> None:
         if self.worker is not None:
             self.worker.request_stop()
             self.cancel_requested = True
+            self.is_paused = False
             self.logMessage.emit("Cancelling... will stop after the current file finishes.")
+
+    def pause_batch(self) -> None:
+        if self.worker is not None:
+            self.worker.request_pause()
+            self.is_paused = True
+
+    def resume_batch(self) -> None:
+        if self.worker is not None:
+            self.worker.request_resume()
+            self.is_paused = False
 
     def request_stop_and_wait(self, timeout_ms: int = 10000) -> None:
         if self.worker is not None:
@@ -91,6 +106,7 @@ class MainViewModel(QObject):
     def _on_batch_finished(self, ok: int, fail: int, skipped: int) -> None:
         self._elapsed_timer.stop()
         self._emit_elapsed()
+        self.is_paused = False
         self.batchFinished.emit(ok, fail, skipped)
 
     def _emit_elapsed(self) -> None:
