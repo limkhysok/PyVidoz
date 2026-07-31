@@ -84,8 +84,10 @@ from models.utils import ensure_utf8_stdio, parse_fps, probe
 ensure_utf8_stdio()
 
 LogFn = Callable[[str], None]
-ProgressFn = Callable[[int, int], None]
 PauseStateFn = Callable[[bool], None]
+# Called after each file is attempted: (idx, total, dst_path, result), where
+# result is 'ok', 'failed', or 'skipped'.
+FileDoneFn = Callable[[int, int, Path, str], None]
 
 
 def detect_gpu_encoders(timeout: float = 15) -> dict[str, bool]:
@@ -281,12 +283,28 @@ def _wait_while_paused(pause_event: threading.Event | None, stop_event: threadin
     log("Resumed.")
 
 
+def _format_one(src: Path, dst: Path, bpp: float, interpolate: bool, dry_run: bool, skip_existing: bool,
+                 log: LogFn, stop_event: threading.Event | None, encoder: str,
+                 cpu_limit_pct: int | None) -> str:
+    """Formats a single file. Returns 'ok', 'failed', or 'skipped'."""
+    if skip_existing and dst.exists():
+        log(f"-> {src.name} [skipped, already exists]")
+        return "skipped"
+    try:
+        succeeded = format_video(src, dst, bpp, interpolate, dry_run, log=log, stop_event=stop_event,
+                                  encoder=encoder, cpu_limit_pct=cpu_limit_pct)
+    except Exception as e:  # noqa: BLE001 - one bad file must not abort the whole batch
+        log(f"   ERROR on {src.name}: {e}")
+        return "failed"
+    return "ok" if succeeded else "failed"
+
+
 def run_batch(in_folder: Path, out_folder: Path, bpp: float = TARGET_BPP,
               interpolate: bool = True, dry_run: bool = False, skip_existing: bool = True,
               log: LogFn = print, stop_event: threading.Event | None = None,
               pause_event: threading.Event | None = None,
               on_pause_state: PauseStateFn | None = None,
-              progress: ProgressFn | None = None,
+              on_file_done: FileDoneFn | None = None,
               encoder: str = "cpu",
               cpu_limit_pct: int | None = DEFAULT_CPU_LIMIT_PCT) -> tuple[int, int, int]:
     """Format every video in in_folder into out_folder. Returns (ok, fail, skipped)."""
@@ -306,23 +324,16 @@ def run_batch(in_folder: Path, out_folder: Path, bpp: float = TARGET_BPP,
             log("Batch cancelled.")
             break
         dst = out_folder / (src.stem + "_formatted.mp4")
-        if skip_existing and dst.exists():
-            log(f"-> {src.name} [skipped, already exists]")
-            skipped += 1
-            if progress:
-                progress(idx, total)
-            continue
-        try:
-            if format_video(src, dst, bpp, interpolate, dry_run, log=log, stop_event=stop_event,
-                             encoder=encoder, cpu_limit_pct=cpu_limit_pct):
-                ok += 1
-            else:
-                fail += 1
-        except Exception as e:  # noqa: BLE001 - one bad file must not abort the whole batch
-            log(f"   ERROR on {src.name}: {e}")
+        result = _format_one(src, dst, bpp, interpolate, dry_run, skip_existing,
+                              log, stop_event, encoder, cpu_limit_pct)
+        if result == "ok":
+            ok += 1
+        elif result == "failed":
             fail += 1
-        if progress:
-            progress(idx, total)
+        else:
+            skipped += 1
+        if on_file_done:
+            on_file_done(idx, total, dst, result)
 
     log(f"\nDone. {ok} succeeded, {fail} failed, {skipped} skipped.")
     return ok, fail, skipped

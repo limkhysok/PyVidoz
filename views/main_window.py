@@ -6,7 +6,7 @@ from pathlib import Path
 
 import qtawesome as qta
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QColor
+from PySide6.QtGui import QCloseEvent, QColor, QIcon
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -53,11 +53,10 @@ from views.theme import (
     make_app_icon,
 )
 
-
 BOLD_LABEL_STYLE = "font-weight: 600;"
 
 
-def _icon(name: str, color: str = ICON_COLOR):
+def _icon(name: str, color: str = ICON_COLOR) -> QIcon:
     return qta.icon(name, color=color, color_disabled=ICON_COLOR_DISABLED)
 
 
@@ -259,6 +258,11 @@ class MainWindow(QMainWindow):
         self.progress_bar.setFormat("%v / %m files (%p%)")
         layout.addWidget(self.progress_bar)
 
+        self.result_label = QLabel("")
+        self.result_label.setWordWrap(True)
+        self.result_label.setVisible(False)
+        layout.addWidget(self.result_label)
+
         return widget
 
     def _build_main_panel(self) -> QWidget:
@@ -400,8 +404,11 @@ class MainWindow(QMainWindow):
             return
 
         self.log_view.clear()
+        self.table.setRowCount(0)
+        self.detail_btn.setEnabled(False)
         self.progress_bar.setRange(0, 1)
         self.progress_bar.setValue(0)
+        self.result_label.setVisible(False)
         self.start_btn.setEnabled(False)
         self.pause_btn.setEnabled(True)
         self._reset_pause_button()
@@ -466,8 +473,10 @@ class MainWindow(QMainWindow):
             self._set_status(f"Done ({fail} failed)", "error")
         else:
             self._set_status("Done", "done")
-        QMessageBox.information(self, "Batch finished",
-                                 f"Succeeded: {ok}\nFailed: {fail}\nSkipped: {skipped}")
+        result_kind = "error" if fail else "done"
+        self.result_label.setStyleSheet(f"color: {STATUS_COLORS[result_kind]};")
+        self.result_label.setText(f"Succeeded: {ok}  |  Failed: {fail}  |  Skipped: {skipped}")
+        self.result_label.setVisible(True)
         self.refresh_table()
 
     def refresh_table(self):

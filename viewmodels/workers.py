@@ -13,6 +13,7 @@ from models.video_formatter import detect_gpu_encoders, run_batch
 class FormatWorker(QThread):
     logMessage = Signal(str)
     progressChanged = Signal(int, int)
+    fileReady = Signal(dict)
     finishedBatch = Signal(int, int, int)
     pauseStateChanged = Signal(bool)
 
@@ -29,6 +30,17 @@ class FormatWorker(QThread):
         self.stop_event = threading.Event()
         self.pause_event = threading.Event()
 
+    def _on_file_done(self, idx: int, total: int, dst: Path, result: str) -> None:
+        self.progressChanged.emit(idx, total)
+        if result == "failed":
+            return
+        try:
+            info: VideoInfo = analyze_file(dst)
+            info["path"] = str(dst)
+        except Exception:  # noqa: BLE001 - a probing hiccup must not abort the batch
+            return
+        self.fileReady.emit(info)
+
     def run(self):
         ok, fail, skipped = run_batch(
             self.in_folder, self.out_folder, self.bpp, self.interpolate,
@@ -37,7 +49,7 @@ class FormatWorker(QThread):
             stop_event=self.stop_event,
             pause_event=self.pause_event,
             on_pause_state=lambda active: self.pauseStateChanged.emit(active),
-            progress=lambda done, total: self.progressChanged.emit(done, total),
+            on_file_done=self._on_file_done,
             encoder=self.encoder, cpu_limit_pct=self.cpu_limit_pct,
         )
         self.finishedBatch.emit(ok, fail, skipped)

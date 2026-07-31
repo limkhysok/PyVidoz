@@ -63,6 +63,7 @@ class MainViewModel(QObject):
         encoder = resolve_encoder(encoder_choice, self.available_encoders)
         self.cancel_requested = False
         self.is_paused = False
+        self.row_info.clear()
         self._start_time = time.time()
         self._elapsed_timer.start()
         self.elapsedChanged.emit("Elapsed: 00:00")
@@ -77,6 +78,7 @@ class MainViewModel(QObject):
         )
         self.worker.logMessage.connect(self.logMessage.emit)
         self.worker.progressChanged.connect(self.progressChanged.emit)
+        self.worker.fileReady.connect(self._on_row_ready)
         self.worker.finishedBatch.connect(self._on_batch_finished)
         self.worker.pauseStateChanged.connect(self.pauseStateChanged.emit)
         self.worker.start()
