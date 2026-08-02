@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from models.config import (
+    APP_VERSION,
     DEFAULT_CPU_LIMIT_PCT,
     DEFAULT_IN,
     DEFAULT_OUT,
@@ -65,7 +66,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self._last_log_size = 180
 
-        self.setWindowTitle("PyVidoz")
+        self.setWindowTitle(f"PyVidoz v{APP_VERSION}")
         self.setWindowIcon(make_app_icon())
         self.resize(1300, 820)
         self.setMinimumSize(1000, 620)

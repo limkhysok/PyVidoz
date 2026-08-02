@@ -1,10 +1,18 @@
 """Shared paths and constants used across the Model layer (and read by the
 View for default field values / display labels)."""
+import sys
 from pathlib import Path
 
+APP_VERSION = "0.1.0"
+
 # models/ is one level below the project root, where ffmpeg.exe/ffprobe.exe
-# and the video_from_*/video_formatted folders actually live.
-BASE_DIR = Path(__file__).resolve().parent.parent
+# and the video_from_*/video_formatted folders actually live. When frozen by
+# PyInstaller (onedir, contents_directory="."), those same files sit next to
+# the .exe instead, so resolve BASE_DIR from sys.executable in that case.
+if getattr(sys, "frozen", False):
+    BASE_DIR = Path(sys.executable).resolve().parent
+else:
+    BASE_DIR = Path(__file__).resolve().parent.parent
 FFPROBE = BASE_DIR / "ffprobe.exe"
 FFMPEG = BASE_DIR / "ffmpeg.exe"
 VIDEO_EXTS = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}

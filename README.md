@@ -143,6 +143,32 @@ same-resolution apples-to-apples comparison where possible. Useful both to
 justify why re-encoding is worth doing, and to sanity-check the output
 afterward.
 
+## Building a standalone .exe (Windows)
+
+Requires `ffmpeg.exe`/`ffprobe.exe` already sitting in the project root (see
+[Requirements](#requirements)) and `pyinstaller` installed (`pip install
+pyinstaller`, not a runtime dependency so it's not in `pyproject.toml`).
+
+```bash
+python scripts/build_exe.py
+```
+
+This runs PyInstaller against `pyvidoz.spec` (onedir build, app icon,
+Windows version resource synced from `models.config.APP_VERSION`), then
+copies `ffmpeg.exe`/`ffprobe.exe` into the output folder. Result:
+`dist/PyVidoz/` -- zip that whole folder for a GitHub Release asset;
+`PyVidoz.exe` inside it is the entry point, and default input/output
+folders (`video_from_download/`, `video_formatted/`) are created next to it
+on first run.
+
+To change the app icon, edit `make_app_icon()` in `views/theme.py` and
+regenerate `assets/icon.ico` with `python scripts/generate_icon.py`.
+
+Note on redistributing ffmpeg: the ffmpeg/ffprobe builds from
+gyan.dev/ffmpeg.org are typically GPL- or LGPL-licensed depending on which
+build variant you download -- check the license bundled with the build you
+use before shipping it inside a release archive.
+
 ## Performance notes
 
 Measured on a 20.6s, 1080x1920 test clip, RTX 4060, before settling on the
@@ -186,6 +212,14 @@ views/                 View layer: PySide6 widgets only
     theme.py                 stylesheet, palette, icon, display-config constants
     detail_dialog.py          per-file technical profile dialog
     main_window.py            main window; binds to MainViewModel, no business logic
+assets/
+    icon.ico               app icon for the packaged .exe (regenerate via scripts/generate_icon.py)
+    fonts/                  bundled JetBrains Mono font files
+scripts/
+    build_exe.py            builds dist/PyVidoz/ via PyInstaller + copies ffmpeg/ffprobe in
+    generate_icon.py        regenerates assets/icon.ico from views/theme.py's make_app_icon()
+pyvidoz.spec           PyInstaller build spec (onedir, icon, version resource)
+version_info.txt       Windows version-resource info for the packaged .exe
 pyproject.toml        Project metadata + dependencies (PySide6)
 .gitignore            Excludes ffmpeg/ffprobe binaries, video I/O folders, build artifacts
 ```
@@ -200,3 +234,7 @@ video_from_iphone/      reference clips for python -m models.video_analyzer to c
 
 These folders are gitignored since they hold personal/large media files, not
 source code.
+
+## License
+
+MIT -- see [LICENSE](LICENSE).

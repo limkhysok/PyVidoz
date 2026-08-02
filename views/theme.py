@@ -1,4 +1,5 @@
 """Styling, palette, icon, and display-config constants for the View layer."""
+import sys
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, Qt
@@ -14,7 +15,11 @@ from PySide6.QtGui import (
     QPolygonF,
 )
 
-FONTS_DIR = Path(__file__).resolve().parent.parent / "assets" / "fonts"
+if getattr(sys, "frozen", False):
+    _PROJECT_ROOT = Path(sys.executable).resolve().parent
+else:
+    _PROJECT_ROOT = Path(__file__).resolve().parent.parent
+FONTS_DIR = _PROJECT_ROOT / "assets" / "fonts"
 FONT_MONO = "JetBrains Mono"
 
 
