@@ -100,7 +100,9 @@ def detect_gpu_encoders(timeout: float = 15) -> dict[str, bool]:
                "-i", "color=c=black:s=256x256:d=0.1", "-frames:v", "1",
                "-c:v", spec["codec"], "-f", "null", "-"]
         try:
-            result = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False)
+            creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
+            result = subprocess.run(cmd, capture_output=True, timeout=timeout, check=False,
+                                     creationflags=creationflags)
             available[key] = result.returncode == 0
         except (subprocess.SubprocessError, OSError):
             available[key] = False
@@ -203,9 +205,11 @@ def _run_ffmpeg(cmd: list[str], dst: Path, log: LogFn, stop_event: threading.Eve
     t0 = time.time()
     with open(log_path, "w", encoding="utf-8", errors="replace") as lf:
         if sys.platform == "win32":
-            # Never let the encode fight the user's foreground apps for CPU scheduling.
+            # Never let the encode fight the user's foreground apps for CPU scheduling,
+            # and suppress the console window ffmpeg.exe would otherwise pop up.
             proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT,
-                                     creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+                                     creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS
+                                     | subprocess.CREATE_NO_WINDOW)
         else:
             proc = subprocess.Popen(cmd, stdout=lf, stderr=subprocess.STDOUT)
         while proc.poll() is None:

@@ -3,7 +3,7 @@ View for default field values / display labels)."""
 import sys
 from pathlib import Path
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "0.1.1"
 
 # models/ is one level below the project root, where ffmpeg.exe/ffprobe.exe
 # and the video_from_*/video_formatted folders actually live. When frozen by

@@ -35,8 +35,10 @@ def parse_fps(rate_str: str) -> float:
 def probe(path: Path) -> dict[str, Any]:
     cmd = [str(FFPROBE), "-v", "quiet", "-print_format", "json",
            "-show_format", "-show_streams", str(path)]
+    creationflags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
     result = subprocess.run(cmd, capture_output=True, text=True,
-                             encoding="utf-8", errors="replace", check=False)
+                             encoding="utf-8", errors="replace", check=False,
+                             creationflags=creationflags)
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError(f"ffprobe failed on {path.name}: {result.stderr[:300]}")
     data: dict[str, Any] = json.loads(result.stdout)
